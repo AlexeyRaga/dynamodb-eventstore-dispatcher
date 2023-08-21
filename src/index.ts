@@ -1,12 +1,25 @@
 "use strict";
 
-import * as _ from "lodash"
+import { Options, loadOptions } from "./options"
+import { Env, createHandler } from "./handler"
+import * as EventStore from "./eventstore"
+import * as Kafka from "./kafka";
 
-import { loadOptions } from "./options"
-import { handler } from "./handler"
+async function makeEnv(options: Options): Promise<Env> {
+  const eventStore = EventStore.createEventStoreEnv(options);
+  const kafka = await Kafka.createKafkaEnv(options);
+  return {
+    eventStore: eventStore,
+    kafka: kafka
+  }
+}
 
+// eslint-disable-next-line @typescript-eslint/no-floating-promises
 (async () => {
   const options = await loadOptions();
-  exports.handler = handler(options);
+  const env = await makeEnv(options);
+
+  // eslint-disable-next-line functional/immutable-data
+  exports.handler = createHandler(env);
 })();
 

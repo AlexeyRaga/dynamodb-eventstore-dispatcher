@@ -3,102 +3,122 @@
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 import { BatchGetItemCommand, BatchWriteItemCommand, DynamoDBClient, QueryCommand, QueryCommandInput, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
 import * as _ from "lodash"
+import { Options } from "./options";
 
-
-const ddbClient = new DynamoDBClient({});
+export interface EventStoreEnv {
+  readonly client: DynamoDBClient;
+  readonly eventsTableName: string;
+  readonly offsetsTableName: string;
+}
 
 export interface EventRecord {
-  id: string;
-  version: number;
-  eventId: string;
-  eventType: string;
-  streamId: string;
-  streamType: string;
-  timestamp: number;
-  // headers: AttributeValue[]
-  data: Uint8Array;
+  readonly id: string;
+  readonly version: number;
+  readonly eventId: string;
+  readonly eventType: string;
+  readonly streamId: string;
+  readonly streamType: string;
+  readonly timestamp: number;
+  readonly headers: Record<string, string>;
+  readonly data: Uint8Array;
 }
 
 export interface Key {
-  id: string;
-  version: number;
+  readonly id: string;
+  readonly version: number;
 }
 
-export async function queryOffsets(offsetsTableName: string, keyValues: string[]): Promise<Record<string, Key>> {
+export function createEventStoreEnv(options: Options): EventStoreEnv {
+  const client = new DynamoDBClient({
+    region: process.env.AWS_REGION,
+    endpoint: process.env.AWS_ENDPOINT_URL,
+  });
+
+  return {
+    client: client,
+    eventsTableName: options.EVENTS_TABLE_NAME,
+    offsetsTableName: options.OFFSETS_TABLE_NAME
+  }
+}
+
+export async function queryOffsets(env: EventStoreEnv, keyValues: readonly string[]): Promise<Record<string, Key>> {
   const keys = keyValues.map(k => ({ id: { S: k } }));
   const request = {
     RequestItems: {
-      [offsetsTableName]: { Keys: keys, ProjectionExpression: 'id, version' },
+      [env.offsetsTableName]: { Keys: keys, ProjectionExpression: 'id, version' },
     }
   };
 
-  const command = new BatchGetItemCommand(request);
-  const result = await ddbClient.send(command);
+  const result = await env.client.send(new BatchGetItemCommand(request));
 
-  const offsets = _.chain(result.Responses)
-    .get(offsetsTableName, [])
+  return _.chain(result.Responses)
+    .get(env.offsetsTableName, [])
     .map(x => unmarshall(x) as Key)
     .keyBy(x => x.id)
     .value();
-
-  return offsets;
 }
 
-export async function commitOffset(offsetsTableName: string, offset: Key) {
+export async function commitOffset(env: EventStoreEnv, offset: Key): Promise<void> {
   const params = {
-    TableName: offsetsTableName,
+    TableName: env.offsetsTableName,
     Key: { "id": { S: offset.id } },
     UpdateExpression: "set version = :version",
     ExpressionAttributeValues: { ":version": { N: offset.version.toString() } }
   };
 
-  await ddbClient.send(new UpdateItemCommand(params));
+  await env.client.send(new UpdateItemCommand(params));
 }
 
-export async function registerChanges(eventsTableName: string, keys: string[]) {
+export async function registerChanges(env: EventStoreEnv, keys: readonly string[]) {
+  if (!keys || keys.length === 0) return;
   const putRequests = keys.map(k => ({
     PutRequest: {
       Item: { id: { S: k }, version: { N: "-1001" } }
     }
   }));
 
-  const params = { RequestItems: { [eventsTableName]: putRequests } };
+  const params = { RequestItems: { [env.eventsTableName]: putRequests } };
   const command = new BatchWriteItemCommand(params);
-  await ddbClient.send(command);
+  await env.client.send(command);
 }
 
 export async function processEvents(
-  eventsTableName: string,
+  env: EventStoreEnv,
   after: Key,
-  handleBatch: (batch: EventRecord[]) => Promise<void>): Promise<void> {
+  handleBatch: (batch: readonly EventRecord[]) => Promise<void>): Promise<void> {
   const eventsQuery = {
-    TableName: eventsTableName,
-    KeyConditionExpression: "id = :streamId and version > :version",
+    TableName: env.eventsTableName,
+    KeyConditionExpression: "id = :id and version > :version",
     ExpressionAttributeValues: {
-      ":streamId": { S: after.id },
+      ":id": { S: after.id },
       ":version": { N: after.version.toString() }
     }
   };
 
-  await paginate<EventRecord>(eventsQuery, async (events): Promise<void> => {
+  await paginate<EventRecord>(env.client, eventsQuery, async (events): Promise<void> => {
     if (events.length === 0) return;
-    handleBatch(events);
+    await handleBatch(events);
   });
 }
 
 async function paginate<T>(
+  client: DynamoDBClient,
   params: QueryCommandInput,
-  processPage: (page: T[]) => Promise<void>): Promise<void> {
+  processPage: (page: readonly T[]) => Promise<void>): Promise<void> {
+
+  // eslint-disable-next-line functional/no-let
   let lastEvaluatedKey = undefined;
 
+  // eslint-disable-next-line functional/no-loop-statements
   do {
     const command = new QueryCommand({ ...params, ExclusiveStartKey: lastEvaluatedKey });
-    const response = await ddbClient.send(command);
+    const response = await client.send(command);
 
     const items = (response.Items || []).map(x => unmarshall(x) as T)
 
     await processPage(items);
 
+    // eslint-disable-next-line functional/no-expression-statements
     lastEvaluatedKey = response.LastEvaluatedKey;
   } while (lastEvaluatedKey);
 }
