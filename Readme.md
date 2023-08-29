@@ -35,7 +35,7 @@ on the Lambda architecture via changes tracking.
 
 ## Diagram
 
-```mermaidjs
+```mermaid
 sequenceDiagram
   participant Stream as DynamoDB Stream
   participant Handler as Lambda Handler
