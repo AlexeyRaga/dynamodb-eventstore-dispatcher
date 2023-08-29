@@ -21,14 +21,18 @@ export const createHandler = async (env: Env) => {
   return async (event: DynamoDBStreamEvent) => {
     const uniqIds = (keys: readonly Key[]) => Array.from(new Set(keys.map(x => x.id)));
 
-    const [changeKeys, recordKeys] = _.chain(event.Records)
+    const [keysToDispatch, otherKeys] = _.chain(event.Records)
       .map(x => unmarshall(x.dynamodb.Keys as Record<string, AttributeValue>) as Key)
       .partition(x => x.version === -1001) // these represent "changes" - keys that were updated.
       .value()
-      .map(uniqIds)
+      .map(uniqIds);
 
-    await EventStore.registerChanges(env.eventStore, recordKeys);
-    await dispatchAll(env, changeKeys);
+    // if there is a change key for a given aggregate, we'll dispatch all the events for it anyway,
+    // no need to record changes again.
+    const keysToRecordChanges = _.differenceBy(otherKeys, keysToDispatch);
+
+    await EventStore.registerChanges(env.eventStore, keysToRecordChanges);
+    await dispatchAll(env, keysToDispatch);
   }
 }
 
