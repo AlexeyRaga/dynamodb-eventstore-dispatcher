@@ -149,3 +149,46 @@ effectively.
 Remember to secure your environment variables and credentials to ensure the privacy and security of your application's
 data and interactions.
 
+## How to Run Tests
+
+The project includes a suite of integration tests to ensure the maintainability and functionality of the codebase. These
+tests are designed to run within a Docker Compose environment for easy setup and execution. You can run the tests using
+the following steps:
+
+1. **Install Dependencies**: Before running the tests, make sure you have all the required dependencies installed. You
+   can do this by running the following command:
+
+   ```sh
+   yarn install
+   ```
+
+2. **Set Up Docker Compose Environment**: The integration tests require a specific environment to run properly. This
+   environment is defined in the `docker-compose.yml` file. To set up the environment, navigate to the project root
+   directory and execute:
+
+   ```sh
+   docker-compose up -d
+   ```
+
+   This will start the necessary services and create a testing environment.
+
+3. **Run Tests**: Once the environment is set up, you can run the integration tests using the following command:
+
+   ```sh
+   yarn test
+   ```
+
+   The `yarn test` command will initiate the test suite and execute the defined integration tests. The results will be
+   displayed in the console.
+
+4. **Teardown Environment**: After the tests have completed, you can tear down the Docker Compose environment to free up
+   resources. Run the following command:
+
+   ```sh
+   docker-compose down -v
+   ```
+
+   This will stop and remove the containers and networks created for the tests.
+
+It's recommended to run the tests regularly to ensure that the project remains in a stable state. If you encounter any
+issues during testing, refer to the test logs and error messages to diagnose and address the problems.
